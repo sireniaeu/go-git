@@ -37,7 +37,7 @@ import (
 )
 
 // GitDirName this is a special folder where all the git stuff is.
-const GitDirName = ".git"
+const GitDirName = ".lucalagit"
 
 var (
 	// ErrBranchExists an error stating the specified branch already exists
