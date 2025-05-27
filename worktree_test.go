@@ -1241,6 +1241,44 @@ func (s *WorktreeSuite) TestResetHard(c *C) {
 	c.Assert(branch.Hash(), Equals, commit)
 }
 
+func (s *WorktreeSuite) TestResetHardSubFolders(c *C) {
+	fs := memfs.New()
+	w := &Worktree{
+		r:          s.Repository,
+		Filesystem: fs,
+	}
+
+	err := w.Checkout(&CheckoutOptions{})
+	c.Assert(err, IsNil)
+
+	err = fs.MkdirAll("dir", os.ModePerm)
+	c.Assert(err, IsNil)
+	tf, err := fs.Create("./dir/testfile.txt")
+	c.Assert(err, IsNil)
+	_, err = tf.Write([]byte("testfile content"))
+	c.Assert(err, IsNil)
+	err = tf.Close()
+	c.Assert(err, IsNil)
+	_, err = w.Add("dir/testfile.txt")
+	c.Assert(err, IsNil)
+	_, err = w.Commit("testcommit", &CommitOptions{Author: &object.Signature{Name: "name", Email: "email"}})
+	c.Assert(err, IsNil)
+
+	err = fs.Remove("dir/testfile.txt")
+	c.Assert(err, IsNil)
+
+	status, err := w.Status()
+	c.Assert(err, IsNil)
+	c.Assert(status.IsClean(), Equals, false)
+
+	err = w.Reset(&ResetOptions{Files: []string{"dir/testfile.txt"}, Mode: HardReset})
+	c.Assert(err, IsNil)
+
+	status, err = w.Status()
+	c.Assert(err, IsNil)
+	c.Assert(status.IsClean(), Equals, true)
+}
+
 func (s *WorktreeSuite) TestResetHardWithGitIgnore(c *C) {
 	fs := memfs.New()
 	w := &Worktree{
@@ -1967,6 +2005,66 @@ func (s *WorktreeSuite) TestAddGlob(c *C) {
 	file = status.File("qux/bar/baz")
 	c.Assert(file.Staging, Equals, Added)
 	c.Assert(file.Worktree, Equals, Unmodified)
+}
+
+func (s *WorktreeSuite) TestAddFilenameStartingWithDot(c *C) {
+	fs := memfs.New()
+	w := &Worktree{
+		r:          s.Repository,
+		Filesystem: fs,
+	}
+
+	err := w.Checkout(&CheckoutOptions{Force: true})
+	c.Assert(err, IsNil)
+
+	idx, err := w.r.Storer.Index()
+	c.Assert(err, IsNil)
+	c.Assert(idx.Entries, HasLen, 9)
+
+	err = util.WriteFile(w.Filesystem, "qux", []byte("QUX"), 0o755)
+	c.Assert(err, IsNil)
+	err = util.WriteFile(w.Filesystem, "baz", []byte("BAZ"), 0o755)
+	c.Assert(err, IsNil)
+	err = util.WriteFile(w.Filesystem, "foo/bar/baz", []byte("BAZ"), 0o755)
+	c.Assert(err, IsNil)
+
+	_, err = w.Add("./qux")
+	c.Assert(err, IsNil)
+
+	_, err = w.Add("./baz")
+	c.Assert(err, IsNil)
+
+	_, err = w.Add("foo/bar/../bar/./baz")
+	c.Assert(err, IsNil)
+
+	idx, err = w.r.Storer.Index()
+	c.Assert(err, IsNil)
+	c.Assert(idx.Entries, HasLen, 12)
+
+	e, err := idx.Entry("qux")
+	c.Assert(err, IsNil)
+	c.Assert(e.Mode, Equals, filemode.Executable)
+
+	e, err = idx.Entry("baz")
+	c.Assert(err, IsNil)
+	c.Assert(e.Mode, Equals, filemode.Executable)
+
+	status, err := w.Status()
+	c.Assert(err, IsNil)
+	c.Assert(status, HasLen, 3)
+
+	file := status.File("qux")
+	c.Assert(file.Staging, Equals, Added)
+	c.Assert(file.Worktree, Equals, Unmodified)
+
+	file = status.File("baz")
+	c.Assert(file.Staging, Equals, Added)
+	c.Assert(file.Worktree, Equals, Unmodified)
+
+	file = status.File("foo/bar/baz")
+	c.Assert(file.Staging, Equals, Added)
+	c.Assert(file.Worktree, Equals, Unmodified)
+
 }
 
 func (s *WorktreeSuite) TestAddGlobErrorNoMatches(c *C) {
@@ -3158,7 +3256,7 @@ func (s *WorktreeSuite) TestRestoreStaged(c *C) {
 	c.Assert(err, Equals, ErrNoRestorePaths)
 
 	// Restore Staged files in 2 groups and confirm status
-	opts.Files = []string{names[0], names[1]}
+	opts.Files = []string{names[0], "./" + names[1]}
 	err = w.Restore(&opts)
 	c.Assert(err, IsNil)
 	verifyStatus(c, "Restored First", w, names, []FileStatus{
@@ -3173,7 +3271,7 @@ func (s *WorktreeSuite) TestRestoreStaged(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(contents), Equals, "Foo Bar:11")
 
-	opts.Files = []string{names[2], names[3]}
+	opts.Files = []string{"./" + names[2], names[3]}
 	err = w.Restore(&opts)
 	c.Assert(err, IsNil)
 	verifyStatus(c, "Restored Second", w, names, []FileStatus{
